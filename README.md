@@ -50,23 +50,58 @@ pip3 install mkdocs-build-plantuml-plugin
 
 ### Plugin Settings
 
-In `mkdocs.yml` add this plugin section (depicted are the default values):
+Plugin settings are defined by adding `build_plantuml` to the `plugins` list in `mkdocs.yml`.
+
+> **Note**: All settings are optional and can be ommited, at which point the plugin will utilize the default values listed in the tables below.
 
 ```yaml
 plugins:
-  - search
+  - search: {}
   - build_plantuml:
-      render: 'server' # or "local" for local rendering
-      bin_path: '/usr/local/bin/plantuml' # ignored when render: server
-      server: 'http://www.plantuml.com/plantuml' # official plantuml server
-      disable_ssl_certificate_validation: true # for self-signed and invalid certs
-      output_format: 'svg' # or "png"
-      allow_multiple_roots: false # in case your codebase contains more locations for diagrams (all ending in diagram_root)
-      diagram_root: 'docs/diagrams' # should reside under docs_dir
-      output_folder: 'out'
-      input_folder: 'src'
-      input_extensions: '' # comma separated list of extensions to parse, by default every file is parsed
+      render:                             ['local'|'server']
+      bin_path:                           Path
+      server:                             URL
+      disable_ssl_certificate_validation: [true|false]
+      output_format:                      ['png'|'svg'|'txt'|'latex'|'pdf']
+      allow_multiple_roots:               [true|false]
+      diagram_root:                       Path or Path List (must be in mkdocs 'docs_dir')
+      output_folder:                      Path (in 'diagram_root')
+      input_folder:                       Path (in 'diagram_root')
+      input_extensions:                   List (Comma Separated)
+      prettify_svg:                       [true|false] (SVG Only)
 ```
+
+#### Common Options
+
+These options apply to both `server` and `local` rendering modes.
+
+| Setting                | Description                                           | Value                                               | Default Value                      |
+|------------------------|-------------------------------------------------------|-----------------------------------------------------|------------------------------------|
+| `render`               | Where the image is processed                          | [`local`\|`server`]                                 | `server`                           |
+| `diagram_root`         | Root directory for diagrams                           | Path or Path List (must be in mkdocs `docs_dir`)    | `docs/diagrams`                    |
+| `output_folder`        | Directory to save the output files                    | Path (in `diagram_root`)                            | `out`                              |
+| `input_folder`         | Directory to read the input files                     | Path (in `diagram_root`)                            | `src`                              |
+| `output_format`        | PlantUML rendering output format                      | [`png`\|`svg`\|`txt`\|`latex`\|`pdf`]               | `png`                              |
+| `allow_multiple_roots` | Allow multiple diagram roots                          | [`true`\|`false`]                                   | `false`                            |
+| `input_extensions`     | Comma-separated list of file extensions to parse      | List (Comma Separated)                              | `""` (empty, all extensions are parsed) |
+| `prettify_svg`         | Pretty print the SVG XML file content                 | [`true`\|`false`]                                   | `false`                            |
+
+#### Server Options
+
+The following options are available only when `render` is set to `server`, otherwise they are ignored.
+
+| Setting                              | Description                          | Value             | Default Value                      |
+|--------------------------------------|--------------------------------------|-------------------|------------------------------------|
+| `server`                             | URL of the PlantUML server           | URL               | `http://www.plantuml.com/plantuml` |
+| `disable_ssl_certificate_validation` | Disable SSL certificate validation   | [`true`\|`false`] | `false`                            |
+
+#### Local Options
+
+The following options are available only when `render` is set to `local`, otherwise they are ignored.
+
+| Setting        | Description                 | Value | Default Value              |
+|----------------|-----------------------------|-------|----------------------------|
+| `bin_path`     | Path to the PlantUML binary | Path  | `/usr/local/bin/plantuml`  |
 
 It is recommended to use the `server` option, which is much faster than `local`.
 
@@ -75,18 +110,26 @@ It is recommended to use the `server` option, which is much faster than `local`.
 This would result in this directory layout:
 
 ```python
-docs/                         # the default MkDocs docs_dir directory
-  diagrams/
-    include/                  # for include files like theme.puml etc (optional, won't be generated)
-    out/                      # the generated images, which can be included in your md files
-      subdir1/file1.svg       # you can organise your diagrams in subfolders, see below
-      file.svg
-    src/                      # the Plantuml sources
-      subdir1/file1.puml
-      subdir2/
-      file.puml
-mkdocs.yml                    # mkdocs configuration file
-
+project_root/                    # Root project directory
+├── docs/                        # the default MkDocs docs_dir directory
+│   ├── diagrams/
+│   │   ├── src/                 # the PlantUML sources
+│   │   │   ├── subdir1/
+│   │   │   │   └── file1.puml
+│   │   │   ├── subdir2/
+│   │   │   │   └── # stuff      # subdir2 can have more files or directories
+│   │   │   └── file.puml
+│   │   ├── include/             # for include files like theme.puml etc (optional, won't be generated)
+│   │   │   └── themes/
+│   │   │       ├── dark.puml
+│   │   │       ├── general.puml
+│   │   │       └── light.puml
+│   │   └── out/                 # the generated images, which can be included in your md files
+│   │       ├── subdir1/
+│   │       │   └── file1.svg    # you can organise your diagrams in subfolders, see below
+│   │       └── file.svg
+├── mkdocs.yml                   # mkdocs configuration file
+└── other_project_files/         # Other project-specific files and directories
 ```
 
 When starting with `mkdocs serve`, it will create all diagrams initially.
@@ -109,11 +152,9 @@ Inside your `index.md` or any other Markdown file you can then reference any cre
 
 ## Dark Mode Support
 
-Since Version 1.4 this plugin can support dark mode when rendering with `server` (prefers-color-scheme).
+The plugin can now support dark mode when rendering in either `local` or `server` modes.
 
-**Note**: Not in local mode, only server rendering mode
-
-1. Install latest (ie. for [Material Theme](https://squidfunk.github.io/mkdocs-material/)) 
+1. Install a dark theme (ie. for [Material Theme](https://squidfunk.github.io/mkdocs-material/)) 
 1. Enable theme support in this plugin:
 
         - build_plantuml:
@@ -123,7 +164,7 @@ Since Version 1.4 this plugin can support dark mode when rendering with `server`
             theme_light: "light.puml"
             theme_dark: "dark.puml"
 
-1. You have to provide two puml theme files, ie mydarkmode.puml and mylightmode.puml
+1. You have to provide two puml theme files, ie `dark.puml` and `light.puml`
 1. In the out directory a `<file>.<ext>` will be created and additionally a `<file>_dark.<ext>`
 1. Insert your images in markdown with `![file](diagrams/out/file.svg#darkable)` (this selector is then used in the [JS file](example/docs/javascript/images_dark.js) to know which images have to be exchanged)
 1. provide [`extra_javascript`](./example/docs/javascript/images_dark.js) file which handles the switch
@@ -134,12 +175,20 @@ You can find an example in the [example folder](./example/)
 
 ![DarkMode](./switch_dark_mode.gif)
 
+<details>
+
+<summary>LightBox Example</summary>
+
+Running with [mkdocs-glightbox](https://blueswen.github.io/mkdocs-glightbox/)
+
 ![DarkMode LightBox](./switch_lightbox.gif)
+
+</details>
+
 
 ## Known restrictions
 
 - If you use `!include` and the `render: "server"` option, this plugin merges those files manually. If there are any issues or side effects because of that, please open a ticket.
-- Dark mode / theme support is currently only available in server rendering mode.
 
 ## Contributing
 

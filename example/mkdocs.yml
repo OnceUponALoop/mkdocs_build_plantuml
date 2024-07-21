@@ -3,17 +3,17 @@ repo_url: https://github.com/christo-ph/mkdocs_build_plantuml
 repo_name: "christo-ph/mkdocs_build_plantuml"
 
 theme:
-  name: "material"
-  language: "en"
+  name: material
+  language: en
+  icon:
+    logo: material/folder-open 
   feature:
     tabs: false
-  logo:
-    icon: "folder_open"
   palette:
     # Palette toggle for automatic mode
     - media: "(prefers-color-scheme)"
       toggle:
-        icon: material/link
+        icon: material/brightness-auto
         name: Switch to light mode
 
     # Palette toggle for light mode
@@ -22,7 +22,7 @@ theme:
       primary: indigo
       accent: indigo
       toggle:
-        icon: material/toggle-switch
+        icon: material/brightness-7
         name: Switch to dark mode
 
     # Palette toggle for dark mode
@@ -31,11 +31,11 @@ theme:
       primary: black
       accent: indigo
       toggle:
-        icon: material/toggle-switch-off
+        icon: material/brightness-4
         name: Switch to system preference
 
 extra_javascript:
-  - "javascript/images_dark.js"
+  - javascript/images_dark.js
 
 nav:
   - Example Diagram: "index.md"
@@ -44,7 +44,10 @@ nav:
       - "Release Notes": "about/release-notes.md"
 
 plugins:
-  - search
+  - search: {}
+  - exclude:
+      glob:
+        - diagrams/include/C4/*
   - build_plantuml:
       render: "server"
       bin_path: "/usr/local/bin/plantuml"
@@ -58,5 +61,6 @@ plugins:
       theme_light: "light.puml"
       theme_dark: "dark.puml"
   - glightbox: # enable lightbox for images
+      effect: zoom
       background: var(--md-default-bg-color)
         

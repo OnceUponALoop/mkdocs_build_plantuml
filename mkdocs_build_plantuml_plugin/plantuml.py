@@ -6,6 +6,10 @@ import re
 import six
 import string
 import zlib
+from lxml import etree
+import tempfile
+import shutil
+
 
 from mkdocs.config import config_options, base
 from mkdocs.plugins import BasePlugin
@@ -36,7 +40,7 @@ class BuildPlantumlPluginConfig(base.Config):
         server (str): The URL of the PlantUML server. Default is "https://www.plantuml.com/plantuml".
         disable_ssl_certificate_validation (bool): Whether to disable SSL certificate validation. Default is False.
         bin_path (str): The path to the PlantUML binary. Default is "/usr/local/bin/plantuml".
-        output_format (str): The output format for generated diagrams. Default is "png".
+        output_format (str): The output format for generated diagrams [png|svg|txt|utxt|vdx|latex:nopreamble|latex|pdf]. Default is "png".
         allow_multiple_roots (bool): Whether to allow multiple diagram roots. Default is False.
         diagram_root (str): The root directory for diagram files. Default is "docs/diagrams".
         output_folder (str): The output folder for generated diagrams. Default is "out".
@@ -47,6 +51,7 @@ class BuildPlantumlPluginConfig(base.Config):
         theme_folder (str): The folder containing custom theme files. Default is "include/themes/".
         theme_light (str): The filename of the light theme file. Default is "light.puml".
         theme_dark (str): The filename of the dark theme file. Default is "dark.puml".
+        prettify_svg (bool): Whether to pretty print the svg xml content before saving it to a file. Default is False.
     """
     render = mkdocs.config.config_options.Type(str, default="server")
     server = mkdocs.config.config_options.Type(
@@ -67,6 +72,7 @@ class BuildPlantumlPluginConfig(base.Config):
     theme_folder = mkdocs.config.config_options.Type(str, default="include/themes/")
     theme_light = mkdocs.config.config_options.Type(str, default="light.puml")
     theme_dark = mkdocs.config.config_options.Type(str, default="dark.puml")
+    prettify_svg = mkdocs.config.config_options.Type(bool, default=False)
 
 
 class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
@@ -139,13 +145,11 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
                         # Finally convert
                         self._convert(diagram)
 
-                        # Second time (if dark mode is enabled)
-                        if self.config["theme_enabled"]:
-                            # Go through the file a second time for themed option
-                            self._readFile(diagram, True)
+                        # Go through the file a second time for themed option
+                        self._readFile(diagram, True)
 
-                            # Finally convert
-                            self._convert(diagram, True)
+                        # Finally convert
+                        self._convert(diagram, True)
 
         return config
 
@@ -215,8 +219,7 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
                     # we look for <filename> which starts after a whitespace
                     out_filename = line[ws + 1 :]
                     diagram.out_file = str(outDir / f"{out_filename}.{self.config['output_format']}")
-                    if self.config["theme_enabled"]:
-                        diagram.out_file_dark = str(outDir / f"{out_filename}_dark.{self.config['output_format']}")
+                    diagram.out_file_dark = str(outDir / f"{out_filename}_dark.{self.config['output_format']}")
                     return True
         return False
 
@@ -236,11 +239,10 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
         except Exception:
             diagram.img_time = 0
 
-        if self.config["theme_enabled"]:
-            try:
-                diagram.img_time_dark = Path(diagram.out_file_dark).stat().st_mtime
-            except Exception:
-                diagram.img_time_dark = 0
+        try:
+            diagram.img_time_dark = Path(diagram.out_file_dark).stat().st_mtime
+        except Exception:
+            diagram.img_time_dark = 0
 
         diagram.src_time = (Path(diagram.directory) / diagram.file).stat().st_mtime
 
@@ -277,31 +279,30 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
     # Reads the file recursively
     def _readFileRecursively(self, lines, temp_file, diagram, directory, dark_mode):
         """
-        Recursively reads the lines of a file, processing include statements and appending the contents to a temporary file.
+        Processes the lines of a PlantUML file, handling !include directives and other content.
 
         Args:
-            lines (list): The lines of the file to be read.
-            temp_file (str): The temporary file to append the contents to.
-            diagram (str): The diagram being processed.
-            directory (str): The directory of the file being read.
-            dark_mode (bool): Flag indicating whether dark mode is enabled.
+            lines (list): The lines of the PlantUML file.
+            diagram (Diagram): The diagram object containing metadata.
+            directory (str): The directory containing the PlantUML file.
+            dark_mode (bool): Indicates whether to process the diagram in dark mode.
 
         Returns:
-            str: The updated temporary file with the contents of the file and included files.
+            str: The processed PlantUML content.
         """
+        processed_lines = []
+
         for line in lines:
             line = line.strip()
             if line.startswith("!include"):
-                temp_file = self._readIncludeLine(
-                    diagram, line, temp_file, directory, dark_mode
-                )
+                include_content = self._readIncludeLine(diagram, line, '', directory, dark_mode)
+                processed_lines.append(include_content)
             else:
-                temp_file += line
+                processed_lines.append(line)
+                if "\n" not in line:
+                    processed_lines.append("\n")
 
-            if "\n" not in line:
-                temp_file += "\n"
-
-        return temp_file
+        return ''.join(processed_lines)
 
     def _readIncludeLine(self, diagram, line, temp_file, directory, dark_mode):
         """
@@ -489,16 +490,17 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
                 diagram.out_file = (
                     diagram.file[: out_index + 1] + self.config["output_format"]
                 )
-                if self.config["theme_enabled"]:
-                    diagram.out_file_dark = (
-                        diagram.file[:out_index] + "_dark." + self.config["output_format"]
-                    )
+                diagram.out_file_dark = (
+                    diagram.file[:out_index] + "_dark." + self.config["output_format"]
+                )
 
             diagram.out_file = str(Path(diagram.out_dir) / diagram.out_file)
-            if self.config["theme_enabled"]:
-                diagram.out_file_dark = str(Path(diagram.out_dir) / diagram.out_file_dark)
+            diagram.out_file_dark = str(Path(diagram.out_dir) / diagram.out_file_dark)
 
             return diagram
+
+
+
 
     def _convert(self, diagram, dark_mode=False):
         """
@@ -508,37 +510,95 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
             diagram (Diagram): The diagram object to convert.
             dark_mode (bool, optional): Indicates whether to convert the diagram in dark mode. Defaults to False.
         """
+        diagramFile = Path(diagram.directory) / diagram.file
+        
+        # Determine if conversion is needed
         if not dark_mode:
-            if (diagram.img_time < diagram.src_time) or (
-                diagram.inc_time > diagram.img_time
-            ):
-                diagramFile = Path(diagram.directory) / diagram.file
-                print(f"Converting {diagramFile}")
-                if self.config["render"] == "local":
-                    command = self.config["bin_path"].rsplit()
-                    call(
-                        [
-                            *command,
-                            "-t" + self.config["output_format"],
-                            str(diagramFile),
-                            "-o",
-                            diagram.out_dir,
-                        ]
-                    )
-                else:
-                    self._call_server(diagram, diagram.out_file)
-
-        # If Dark mode AND edit time of includes higher than
-        # image AND server render
-        elif (
-            dark_mode
-            and (
-                (diagram.img_time_dark < diagram.src_time)
-                or (diagram.inc_time > diagram.img_time_dark)
+            needs_conversion = (
+                (diagram.img_time < diagram.src_time) or 
+                (diagram.inc_time > diagram.img_time)
             )
-            and self.config["render"] == "server"
-        ):
-            self._call_server(diagram, diagram.out_file_dark)
+        else:
+            needs_conversion = (
+                (diagram.img_time_dark < diagram.src_time) or 
+                (diagram.inc_time > diagram.img_time_dark)
+            )
+
+        if needs_conversion:
+            print(f"Converting {diagramFile}")
+
+            if self.config["render"] == "local":
+                print(f"Converting Locally")
+                command = self.config["bin_path"].rsplit()
+                cmd_args = [
+                    *command,
+                    "-t" + self.config["output_format"]
+                ]
+
+                if self.config.get("theme_enabled", False):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".puml", mode='w', encoding='utf-8') as temp_puml:
+                        temp_puml.write(diagram.concat_file)
+                        temp_puml_path = temp_puml.name
+                    cmd_args.append(temp_puml_path)
+                else:
+                    cmd_args.append(str(diagramFile))
+
+                if dark_mode:
+                    cmd_args.append("-darkmode")
+
+                with tempfile.TemporaryDirectory() as tmpdirname:
+                    tmp_output_dir = Path(tmpdirname)
+                    cmd_args.extend(["-o", str(tmp_output_dir)])
+
+                    call(cmd_args)
+
+                    # List files in the temporary directory
+                    generated_files = list(tmp_output_dir.glob('*'))
+
+                    if not generated_files:
+                        raise RuntimeError("No files were generated by PlantUML")
+
+                    generated_file_path = generated_files[0]
+
+                    # Move and rename the generated file
+                    if dark_mode:
+                        shutil.move(str(generated_file_path), diagram.out_file_dark)
+                        output_file = diagram.out_file_dark
+                    else:
+                        shutil.move(str(generated_file_path), diagram.out_file)
+                        output_file = diagram.out_file
+
+                    # Format the SVG content if the output format is SVG
+                    if self.config["output_format"] == "svg":
+                        try:
+                            with open(output_file, "r", encoding="utf-8") as file:
+                                svg_content = file.read()
+                            formatted_svg = self._pretty_print_svg(svg_content)
+                            with open(output_file, "w", encoding="utf-8") as file:
+                                file.write(formatted_svg)
+                            print("Formatting SVG content successful.")
+                        except Exception as e:
+                            print(f"Error formatting SVG content: {e}")
+
+            else:
+                print(f"Converting with PlantUML Server")
+                content = self._call_server(diagram, diagram.out_file_dark if dark_mode else diagram.out_file)
+
+                # Format the SVG content if the output format is SVG
+                if self.config["output_format"] == "svg":
+                    try:
+                        formatted_svg = self._pretty_print_svg(content.decode("utf-8"))
+                        print("Formatting SVG content successful.")
+                    except Exception as e:
+                        print(f"Error formatting SVG content: {e}")
+                        formatted_svg = content.decode("utf-8")  # Fallback to raw content
+                else:
+                    formatted_svg = content.decode("utf-8")
+
+                output_file = diagram.out_file_dark if dark_mode else diagram.out_file
+                with open(output_file, "w", encoding="utf-8") as file:
+                    file.write(formatted_svg)
+
 
     def _call_server(self, diagram, out_file):
         """
@@ -567,10 +627,14 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
             + diagram.b64encoded
         )
 
+        print(f"Making request to URL: {url}")
+
         try:
             response, content = http.request(url)
+            print(f"Response status: {response.status}")
             if response.status != 200:
                 print(f"Wrong response status for {diagram.file}: {response.status}")
+                return
         except Exception as error:
             print(f"Server error while processing {diagram.file}: {error}")
             raise error
@@ -578,8 +642,45 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
             outDir = Path(diagram.out_dir)
             outDir.mkdir(parents=True, exist_ok=True)
 
-            with (outDir / out_file).open("bw+") as out:
-                out.write(content)
+            # Format the SVG content if the output format is SVG
+            if self.config["output_format"] == "svg":
+                try:
+                    formatted_svg = self._pretty_print_svg(content.decode("utf-8"))
+                    print("Formatting SVG content successful.")
+                except Exception as e:
+                    print(f"Error formatting SVG content: {e}")
+                    formatted_svg = content.decode("utf-8")  # Fallback to raw content
+            else:
+                formatted_svg = content.decode("utf-8")
+
+            output_path = outDir / out_file
+            print(f"Saving output to {output_path}")
+            try:
+                with output_path.open("w", encoding="utf-8") as out:
+                    out.write(formatted_svg)
+                    print("File saved successfully.")
+            except Exception as e:
+                print(f"Error saving file: {e}")
+                raise
+
+    def _pretty_print_svg(self, svg_content):
+        """
+        Pretty prints the SVG content using ElementTree.
+
+        Args:
+            svg_content (str): The SVG content.
+
+        Returns:
+            str: The pretty printed SVG content.
+        """
+        try:
+            root = etree.fromstring(svg_content)
+            pretty_xml = etree.tostring(root, pretty_print=True, encoding='utf-8').decode('utf-8')
+            return pretty_xml
+        except Exception as e:
+            print(f"Error pretty-printing SVG content: {e}")
+            return svg_content  # Fallback to raw content if pretty-printing fails
+
 
     def _file_matches_extension(self, file):
             """
