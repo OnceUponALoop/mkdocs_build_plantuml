@@ -199,7 +199,6 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
                        / self.config["output_folder"]
                        / relPath)
 
-    # Search for a optional filename after the start tag
     def _search_start_tag(self, diagram):
         """
         Searches for the start tag in the given diagram's source file and sets the output file paths accordingly.
@@ -211,13 +210,14 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
             bool: True if the start tag is found and the output file paths are set, False otherwise.
         """
         outDir = Path(diagram.out_dir)
+        start_tag = "@startuml"
+
         for line in diagram.src_file:
-            line = line.rstrip()
-            if line.strip().startswith("@startuml"):
-                ws = line.find(" ")
-                if ws > 0:
-                    # we look for <filename> which starts after a whitespace
-                    out_filename = line[ws + 1 :]
+            line = line.strip()
+            if line.startswith(start_tag):
+                parts = line.split(maxsplit=1)
+                if len(parts) == 2:
+                    out_filename = parts[1]
                     diagram.out_file = str(outDir / f"{out_filename}.{self.config['output_format']}")
                     diagram.out_file_dark = str(outDir / f"{out_filename}_dark.{self.config['output_format']}")
                     return True
@@ -249,6 +249,18 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
         # Include time
         diagram.inc_time = 0
 
+    def preprocess_includes(self, lines):
+        include_lines = []
+        for i, line in enumerate(lines):
+            if re.match(r"^!include", line.strip()):
+                include_lines.append((i, line.strip()))
+        return include_lines
+
+    def process_includes(self, diagram, include_lines, lines, directory, dark_mode):
+        for i, line in include_lines:
+            include_content = self._readIncludeLine(diagram, line, '', directory, dark_mode)
+            lines[i] = include_content
+
     def _readFile(self, diagram, dark_mode):
         """
         Reads the contents of a file and performs compression, base64 encoding, and other operations on it.
@@ -261,9 +273,15 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
             None
         """
         print(f"Processing diagram {diagram.file}")
+        
+        # Read the file into a list of lines
+        lines = diagram.src_file.copy()
+        
+        # Process the file recursively
         temp_file = self._readFileRecursively(
-            diagram.src_file, "", diagram, diagram.directory, dark_mode
+            lines, diagram, diagram.directory, dark_mode
         )
+        
         try:
             compressed_str = zlib.compress(temp_file.encode("utf-8"))
             compressed_string = compressed_str[2:-4]
@@ -273,11 +291,11 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
                 .decode("utf-8")
             )
             diagram.concat_file = temp_file
-        except Exception as _:
+        except Exception as e:
+            print(f"Error during compression and encoding: {e}")
             diagram.b64encoded = ""
 
-    # Reads the file recursively
-    def _readFileRecursively(self, lines, temp_file, diagram, directory, dark_mode):
+    def _readFileRecursively(self, lines, diagram, directory, dark_mode):
         """
         Processes the lines of a PlantUML file, handling !include directives and other content.
 
@@ -290,67 +308,35 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
         Returns:
             str: The processed PlantUML content.
         """
-        processed_lines = []
-
-        for line in lines:
-            line = line.strip()
-            if line.startswith("!include"):
-                include_content = self._readIncludeLine(diagram, line, '', directory, dark_mode)
-                processed_lines.append(include_content)
-            else:
-                processed_lines.append(line)
-                if "\n" not in line:
-                    processed_lines.append("\n")
-
-        return ''.join(processed_lines)
+        include_lines = self.preprocess_includes(lines)
+        self.process_includes(diagram, include_lines, lines, directory, dark_mode)
+        return ''.join(lines)
 
     def _readIncludeLine(self, diagram, line, temp_file, directory, dark_mode):
         """
         Handles the different include types like !includeurl, !include, and !includesub.
-
-        Args:
-            diagram (Diagram): The diagram object.
-            line (str): The include line to be processed.
-            temp_file (str): The temporary file content.
-            directory (str): The directory path.
-            dark_mode (bool): Flag indicating if dark mode is enabled.
-
-        Returns:
-            str: The updated temporary file content.
-
-        Raises:
-            Exception: If the include type is unknown or if the syntax of !includesub is invalid.
-            FileNotFoundError: If the included file cannot be found.
         """
-        # If includeurl is found, we do not have to do anything here.
-        # Server can handle that
         if re.match(r"^!includeurl\s+\S+\s*$", line):
             temp_file += line
 
         elif re.match(r"^!includesub\s+\S+\s*$", line):
-            # on the eleventh position starts the included file
             parts = line[11:].strip().split("!")
             if len(parts) == 2:
-                inc_file = parts[0]  # Extract the file path
-                sub_name = parts[1]  # Extract the sub name after the '!'
+                inc_file = parts[0]
+                sub_name = parts[1]
 
                 if dark_mode:
                     inc_file = inc_file.replace(
                         self.config["theme_light"], self.config["theme_dark"]
                     )
 
-                # Read sub contents of the included file
                 try:
                     inc_file_abs = str((Path(directory) / inc_file).resolve())
-                    temp_file = self._read_incl_sub(
-                        diagram, temp_file, dark_mode, inc_file_abs, sub_name
-                    )
+                    temp_file = self._read_incl_sub(diagram, temp_file, dark_mode, inc_file_abs, sub_name)
                 except Exception as e1:
                     try:
                         inc_file_abs = str((Path(diagram.root_dir) / inc_file).resolve())
-                        temp_file = self._read_incl_sub(
-                            diagram, temp_file, dark_mode, inc_file_abs, sub_name
-                        )
+                        temp_file = self._read_incl_sub(diagram, temp_file, dark_mode, inc_file_abs, sub_name)
                     except Exception as e2:
                         print("Could not find included file" + str(e1) + str(e2))
                         raise e2
@@ -360,7 +346,6 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
                 )
 
         elif re.match(r"^!include\s+\S+\s*$", line):
-            # on the ninth position starts the filename
             inc_file = line[9:].rstrip()
 
             if dark_mode:
@@ -368,35 +353,28 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
                     self.config["theme_light"], self.config["theme_dark"]
                 )
 
-            # According to plantuml, simple !include can also have urls, or use the <> format to include stdlib files,
-            # ignore that and continue
             if inc_file.startswith("http") or inc_file.startswith("<"):
                 temp_file += line
                 return temp_file
 
-            # Read contents of the included file
             try:
                 inc_file_abs = (Path(directory) / inc_file).resolve()
                 if inc_file_abs.exists():
-                    temp_file = self._read_incl_line_file(
-                        diagram, temp_file, dark_mode, inc_file_abs
-                    )
+                    temp_file = self._read_incl_line_file(diagram, temp_file, dark_mode, inc_file_abs)
                 else:
                     print(f"Could not find include in primary location: {inc_file_abs}")
                     inc_file_abs_alt = (Path(diagram.root_dir) / inc_file).resolve()
                     if inc_file_abs_alt.exists():
-                        temp_file = self._read_incl_line_file(
-                            diagram, temp_file, dark_mode, inc_file_abs
-                        )
+                        temp_file = self._read_incl_line_file(diagram, temp_file, dark_mode, inc_file_abs_alt)
                     else:
-                        print(f"Could not find include in secondary location: {inc_file_abs}")
+                        print(f"Could not find include in secondary location: {inc_file_abs_alt}")
                         raise Exception(f"Include could not be resolved: {line}")
             except FileNotFoundError as fnfe:
                 print(f"Could not find include {fnfe}")
         else:
             raise Exception(f"Unknown include type: {line}")
         return temp_file
-
+    
     def _read_incl_line_file(self, diagram, temp_file, dark_mode, inc_file_abs):
         """
         Read the included line file and update the diagram's inc_time if necessary.
@@ -419,9 +397,9 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
             diagram.inc_time = local_inc_time
 
         with inc_file_abs.open("rt") as inc:
+            lines = inc.readlines()
             temp_file = self._readFileRecursively(
-                inc,
-                temp_file,
+                lines,
                 diagram,
                 inc_file_abs.parent.resolve(),
                 dark_mode,
@@ -498,9 +476,6 @@ class BuildPlantumlPlugin(BasePlugin[BuildPlantumlPluginConfig]):
             diagram.out_file_dark = str(Path(diagram.out_dir) / diagram.out_file_dark)
 
             return diagram
-
-
-
 
     def _convert(self, diagram, dark_mode=False):
         """
